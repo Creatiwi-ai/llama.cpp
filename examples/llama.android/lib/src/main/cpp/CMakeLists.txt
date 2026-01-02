@@ -1,4 +1,4 @@
-cmake_minimum_required(VERSION 3.31.6)
+cmake_minimum_required(VERSION 3.22.1)
 
 project("ai-chat" VERSION 1.0.0 LANGUAGES C CXX)
 
@@ -12,22 +12,29 @@ set(CMAKE_C_FLAGS   "${CMAKE_C_FLAGS}"   CACHE STRING "" FORCE)
 set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS}" CACHE STRING "" FORCE)
 
 # --------------------------------------------------------------------------
-# AI Chat library
+# AI Chat library - Simplified for cross-platform build
 # --------------------------------------------------------------------------
 
 if(DEFINED ANDROID_ABI)
     message(STATUS "Detected Android ABI: ${ANDROID_ABI}")
     if(ANDROID_ABI STREQUAL "arm64-v8a")
         set(GGML_SYSTEM_ARCH "ARM")
-        set(GGML_CPU_KLEIDIAI ON)
-        set(GGML_OPENMP ON)
+    elseif(ANDROID_ABI STREQUAL "armeabi-v7a")
+        set(GGML_SYSTEM_ARCH "ARM")
     elseif(ANDROID_ABI STREQUAL "x86_64")
         set(GGML_SYSTEM_ARCH "x86")
-        set(GGML_CPU_KLEIDIAI OFF)
-        set(GGML_OPENMP OFF)
     else()
-        message(FATAL_ERROR "Unsupported ABI: ${ANDROID_ABI}")
+        message(WARNING "Unknown ABI: ${ANDROID_ABI}, using ARM defaults")
+        set(GGML_SYSTEM_ARCH "ARM")
     endif()
+endif()
+
+# Disable problematic features - passed from Gradle but set here as fallback
+if(NOT DEFINED GGML_CPU_KLEIDIAI)
+    set(GGML_CPU_KLEIDIAI OFF)
+endif()
+if(NOT DEFINED GGML_OPENMP)
+    set(GGML_OPENMP OFF)
 endif()
 
 set(LLAMA_SRC ${CMAKE_CURRENT_LIST_DIR}/../../../../../../)
@@ -38,8 +45,6 @@ add_library(${CMAKE_PROJECT_NAME} SHARED
 
 target_compile_definitions(${CMAKE_PROJECT_NAME} PRIVATE
         GGML_SYSTEM_ARCH=${GGML_SYSTEM_ARCH}
-        GGML_CPU_KLEIDIAI=$<BOOL:${GGML_CPU_KLEIDIAI}>
-        GGML_OPENMP=$<BOOL:${GGML_OPENMP}>
 )
 
 target_include_directories(${CMAKE_PROJECT_NAME} PRIVATE
