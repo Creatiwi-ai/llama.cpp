@@ -87,19 +87,19 @@ afterEvaluate {
             create<MavenPublication>("release") {
                 from(components["release"])
 
-                groupId = "com.github.kgluszczyk"
+                groupId = "com.github.creatiwi-ai"
                 artifactId = "llama-android"
                 version = libraryVersion
 
                 pom {
                     name.set("llama-android")
                     description.set("llama.cpp Android library for on-device LLM inference")
-                    url.set("https://github.com/kgluszczyk/llama.cpp")
+                    url.set("https://github.com/Creatiwi-ai/llama.cpp")
 
                     licenses {
                         license {
                             name.set("MIT License")
-                            url.set("https://github.com/kgluszczyk/llama.cpp/blob/master/LICENSE")
+                            url.set("https://github.com/Creatiwi-ai/llama.cpp/blob/master/LICENSE")
                         }
                     }
                 }
@@ -109,7 +109,7 @@ afterEvaluate {
         repositories {
             maven {
                 name = "GitHubPackages"
-                url = uri("https://maven.pkg.github.com/kgluszczyk/llama.cpp")
+                url = uri("https://maven.pkg.github.com/Creatiwi-ai/llama.cpp")
                 credentials {
                     username = githubUser ?: System.getenv("GITHUB_ACTOR")
                     password = githubToken ?: System.getenv("GITHUB_TOKEN")
