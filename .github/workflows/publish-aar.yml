@@ -1,0 +1,75 @@
+name: Build and Publish AAR
+
+on:
+  push:
+    branches: [memorial-compat]
+    tags: ['v*']
+  workflow_dispatch:
+
+env:
+  PACKAGE_NAME: llama-android
+  GROUP_ID: com.github.kgluszczyk
+
+jobs:
+  build-and-publish:
+    runs-on: ubuntu-latest
+
+    permissions:
+      contents: read
+      packages: write
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          submodules: false
+
+      - name: Set up JDK 17
+        uses: actions/setup-java@v4
+        with:
+          java-version: '17'
+          distribution: 'temurin'
+
+      - name: Setup Android SDK
+        uses: android-actions/setup-android@v3
+
+      - name: Install NDK
+        run: |
+          sdkmanager --install "ndk;26.1.10909125"
+          sdkmanager --install "cmake;3.22.1"
+
+      - name: Extract version
+        id: version
+        run: |
+          if [[ "${{ github.ref }}" == refs/tags/v* ]]; then
+            VERSION="${{ github.ref_name }}"
+            VERSION="${VERSION#v}"
+          else
+            VERSION="1.0.0-SNAPSHOT"
+          fi
+          echo "version=$VERSION" >> $GITHUB_OUTPUT
+          echo "Building version: $VERSION"
+
+      - name: Build AAR
+        working-directory: examples/llama.android
+        run: |
+          chmod +x gradlew
+          ./gradlew :lib:assembleRelease --no-daemon
+
+      - name: Publish to GitHub Packages
+        working-directory: examples/llama.android
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          ./gradlew :lib:publishReleasePublicationToGitHubPackagesRepository --no-daemon \
+            -Pversion=$VERSION \
+            -PgithubUser=${{ github.actor }} \
+            -PgithubToken=${{ secrets.GITHUB_TOKEN }}
+
+      - name: Upload AAR artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: llama-android-${{ steps.version.outputs.version }}
+          path: examples/llama.android/lib/build/outputs/aar/*.aar
+          retention-days: 90

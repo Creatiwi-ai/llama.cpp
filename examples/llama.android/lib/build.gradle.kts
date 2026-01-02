@@ -1,7 +1,12 @@
 plugins {
     id("com.android.library")
     id("org.jetbrains.kotlin.android")
+    id("maven-publish")
 }
+
+val libraryVersion: String = project.findProperty("version") as? String ?: "1.0.0-SNAPSHOT"
+val githubUser: String? = project.findProperty("githubUser") as? String
+val githubToken: String? = project.findProperty("githubToken") as? String
 
 android {
     namespace = "com.arm.aichat"
@@ -70,4 +75,43 @@ dependencies {
 
     testImplementation("junit:junit:4.13.2")
     androidTestImplementation("androidx.test.ext:junit:1.1.5")
+}
+
+// Publishing configuration for GitHub Packages
+afterEvaluate {
+    publishing {
+        publications {
+            create<MavenPublication>("release") {
+                from(components["release"])
+
+                groupId = "com.github.kgluszczyk"
+                artifactId = "llama-android"
+                version = libraryVersion
+
+                pom {
+                    name.set("llama-android")
+                    description.set("llama.cpp Android library for on-device LLM inference")
+                    url.set("https://github.com/kgluszczyk/llama.cpp")
+
+                    licenses {
+                        license {
+                            name.set("MIT License")
+                            url.set("https://github.com/kgluszczyk/llama.cpp/blob/master/LICENSE")
+                        }
+                    }
+                }
+            }
+        }
+
+        repositories {
+            maven {
+                name = "GitHubPackages"
+                url = uri("https://maven.pkg.github.com/kgluszczyk/llama.cpp")
+                credentials {
+                    username = githubUser ?: System.getenv("GITHUB_ACTOR")
+                    password = githubToken ?: System.getenv("GITHUB_TOKEN")
+                }
+            }
+        }
+    }
 }
