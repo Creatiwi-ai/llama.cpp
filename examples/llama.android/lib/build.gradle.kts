@@ -4,7 +4,7 @@ plugins {
     id("maven-publish")
 }
 
-val libraryVersion: String = project.findProperty("version") as? String ?: "1.0.0-SNAPSHOT"
+val libraryVersion: String = project.findProperty("version") as? String ?: "1.1.0-SNAPSHOT"
 val githubUser: String? = project.findProperty("githubUser") as? String
 val githubToken: String? = project.findProperty("githubToken") as? String
 
