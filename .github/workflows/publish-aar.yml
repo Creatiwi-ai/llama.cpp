@@ -8,7 +8,7 @@ on:
 
 env:
   PACKAGE_NAME: llama-android
-  GROUP_ID: com.github.kgluszczyk
+  GROUP_ID: com.github.creatiwi-ai
 
 jobs:
   build-and-publish:
@@ -45,7 +45,7 @@ jobs:
             VERSION="${{ github.ref_name }}"
             VERSION="${VERSION#v}"
           else
-            VERSION="1.0.0-SNAPSHOT"
+            VERSION="1.1.0-SNAPSHOT"
           fi
           echo "version=$VERSION" >> $GITHUB_OUTPUT
           echo "Building version: $VERSION"
