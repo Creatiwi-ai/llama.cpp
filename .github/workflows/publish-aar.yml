@@ -2,7 +2,7 @@ name: Build and Publish AAR
 
 on:
   push:
-    branches: [memorial-compat]
+    branches: [arloom-compat]
     tags: ['v*']
   workflow_dispatch:
 
