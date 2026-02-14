@@ -1,0 +1,88 @@
+name: Build and Publish XCFramework
+
+on:
+  push:
+    branches: [memorial-compat]
+    tags: ['v*']
+  workflow_dispatch:
+
+env:
+  ARTIFACT_NAME: llama-xcframework
+
+jobs:
+  build-and-publish:
+    runs-on: macos-14
+
+    permissions:
+      contents: write
+      packages: write
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          submodules: false
+
+      - name: Set up Xcode
+        uses: maxim-lobanov/setup-xcode@v1
+        with:
+          xcode-version: latest-stable
+
+      - name: Extract version
+        id: version
+        run: |
+          if [[ "${{ github.ref }}" == refs/tags/v* ]]; then
+            VERSION="${{ github.ref_name }}"
+            VERSION="${VERSION#v}"
+          else
+            VERSION="1.1.0-SNAPSHOT"
+          fi
+          echo "version=$VERSION" >> $GITHUB_OUTPUT
+          echo "Building version: $VERSION"
+
+      - name: Build XCFramework
+        run: |
+          chmod +x build-xcframework.sh
+          ./build-xcframework.sh
+          echo "XCFramework built at: build-apple/llama.xcframework"
+          ls -la build-apple/
+
+      - name: Package XCFramework
+        run: |
+          cd build-apple
+          zip -r -y ../llama-${{ steps.version.outputs.version }}-xcframework.zip llama.xcframework
+          cd ..
+          echo "Package size:"
+          ls -lh llama-${{ steps.version.outputs.version }}-xcframework.zip
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: llama-xcframework-${{ steps.version.outputs.version }}
+          path: llama-${{ steps.version.outputs.version }}-xcframework.zip
+          retention-days: 90
+
+      - name: Create/Update GitHub Release
+        if: github.ref == 'refs/heads/memorial-compat' || startsWith(github.ref, 'refs/tags/v')
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: xcframework-${{ steps.version.outputs.version }}
+          name: XCFramework ${{ steps.version.outputs.version }}
+          body: |
+            Pre-built llama.cpp XCFramework for iOS/macOS/tvOS with Metal acceleration.
+
+            **Installation (CocoaPods):**
+            ```ruby
+            pod 'llama', :http => 'https://github.com/Creatiwi-ai/llama.cpp/releases/download/xcframework-${{ steps.version.outputs.version }}/llama-${{ steps.version.outputs.version }}-xcframework.zip'
+            ```
+
+            **Contents:**
+            - iOS (arm64, simulator)
+            - macOS (arm64, x86_64)
+            - tvOS (arm64, simulator)
+            - Metal GPU acceleration
+
+            Built from commit: ${{ github.sha }}
+          files: llama-${{ steps.version.outputs.version }}-xcframework.zip
+          prerelease: ${{ contains(steps.version.outputs.version, 'SNAPSHOT') }}
+          generate_release_notes: false
