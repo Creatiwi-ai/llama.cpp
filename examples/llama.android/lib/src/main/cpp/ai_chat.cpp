@@ -543,6 +543,51 @@ Java_com_arm_aichat_internal_InferenceEngineImpl_generateNextToken(
 }
 
 
+/**
+ * Reset the KV cache and chat state WITHOUT unloading the model or freeing
+ * llama_context / sampler / batch / templates. Intended as a cheap alternative
+ * to cleanUp() + loadModel() for single-turn usage patterns where the caller
+ * wants a clean context per invocation.
+ *
+ * This preserves g_model, g_context, g_batch, g_chat_templates, g_sampler but:
+ *   - clears the llama KV cache via llama_memory_clear(..., true) (data + metadata)
+ *   - resets tracked positions (system_prompt_position, current_position)
+ *   - clears chat message history (chat_msgs)
+ *   - clears short-term generation states
+ *   - resets the sampler's internal state (e.g. penalty history)
+ *
+ * After this call, the next setSystemPrompt() will be honored by the engine
+ * (the Kotlin wrapper re-arms _readyForSystemPrompt).
+ */
+extern "C"
+JNIEXPORT void JNICALL
+Java_com_arm_aichat_internal_InferenceEngineImpl_nativeResetContext(JNIEnv * /*unused*/, jobject /*unused*/) {
+    if (g_context == nullptr) {
+        LOGw("resetContext: called while g_context is null - ignoring");
+        return;
+    }
+
+    // Clear the KV cache (data + metadata)
+    llama_memory_clear(llama_get_memory(g_context), true);
+
+    // Reset long-term chat state (positions, message history) WITHOUT touching
+    // the KV cache again - we already cleared it above with true for full wipe.
+    chat_msgs.clear();
+    system_prompt_position = 0;
+    current_position = 0;
+
+    // Reset short-term generation states
+    reset_short_term_states();
+
+    // Reset the sampler's internal state (penalty history, etc.) so fresh
+    // turns are not biased by previous tokens.
+    if (g_sampler != nullptr) {
+        common_sampler_reset(g_sampler);
+    }
+
+    LOGi("resetContext: KV cache cleared, positions reset, sampler reset");
+}
+
 extern "C"
 JNIEXPORT void JNICALL
 Java_com_arm_aichat_internal_InferenceEngineImpl_unload(JNIEnv * /*unused*/, jobject /*unused*/) {

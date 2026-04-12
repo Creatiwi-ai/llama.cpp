@@ -36,6 +36,20 @@ interface InferenceEngine {
     suspend fun bench(pp: Int, tg: Int, pl: Int, nr: Int = 1): String
 
     /**
+     * Reset the llama.cpp KV cache, chat history and sampler state WITHOUT
+     * unloading the model. Cheap alternative to [cleanUp] + [loadModel] for
+     * single-turn usage patterns where each call should start with a fresh
+     * context.
+     *
+     * After this call the engine is left in [State.ModelReady] and a
+     * subsequent [setSystemPrompt] call will be honored (the internal
+     * ready-for-system-prompt flag is re-armed).
+     *
+     * No-op if the engine is not currently in [State.ModelReady].
+     */
+    fun resetContext()
+
+    /**
      * Unloads the currently loaded model.
      */
     fun cleanUp()

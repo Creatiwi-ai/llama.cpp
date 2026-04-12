@@ -104,6 +104,9 @@ internal class InferenceEngineImpl private constructor(
     private external fun generateNextToken(): String?
 
     @FastNative
+    private external fun nativeResetContext()
+
+    @FastNative
     private external fun unload()
 
     @FastNative
@@ -274,6 +277,44 @@ internal class InferenceEngineImpl private constructor(
                 _state.value = InferenceEngine.State.ModelReady
             }
         }
+
+    /**
+     * Reset KV cache, chat history, and sampler state without unloading the
+     * model. Cheap alternative to [cleanUp] + [loadModel] for single-turn
+     * usage. Leaves the engine in [InferenceEngine.State.ModelReady] and
+     * re-arms `_readyForSystemPrompt` so the next [setSystemPrompt] call is
+     * honored by the engine.
+     *
+     * Must be called only when the engine is in [InferenceEngine.State.ModelReady].
+     * No-op otherwise, with a warning log.
+     */
+    override fun resetContext() {
+        _cancelGeneration = true
+        runBlocking(llamaDispatcher) {
+            val currentState = _state.value
+            if (currentState !is InferenceEngine.State.ModelReady) {
+                Log.w(TAG, "resetContext: engine not in ModelReady (is ${currentState.javaClass.simpleName}), ignoring")
+                // Still clear cancel flag so the engine is not wedged.
+                _cancelGeneration = false
+                return@runBlocking
+            }
+            try {
+                Log.i(TAG, "resetContext: clearing KV cache and chat state")
+                nativeResetContext()
+                // Re-arm system prompt gate so the next setSystemPrompt is honored.
+                _readyForSystemPrompt = true
+                Log.i(TAG, "resetContext: done")
+            } catch (e: Exception) {
+                Log.e(TAG, "resetContext: native call failed", e)
+                _state.value = InferenceEngine.State.Error(e)
+                throw e
+            } finally {
+                // Always clear the cancel flag, even if the native call threw,
+                // so subsequent generations are not permanently blocked.
+                _cancelGeneration = false
+            }
+        }
+    }
 
     /**
      * Unloads the model and frees resources, or reset error states
