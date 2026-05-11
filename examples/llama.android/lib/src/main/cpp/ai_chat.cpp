@@ -38,6 +38,7 @@ static llama_context                    * g_context;
 static llama_batch                        g_batch;
 static common_chat_templates_ptr          g_chat_templates;
 static common_sampler                   * g_sampler;
+static bool                               g_use_jinja = false;
 
 extern "C"
 JNIEXPORT void JNICALL
@@ -58,7 +59,8 @@ Java_com_arm_aichat_internal_InferenceEngineImpl_init(JNIEnv *env, jobject /*unu
 
 extern "C"
 JNIEXPORT jint JNICALL
-Java_com_arm_aichat_internal_InferenceEngineImpl_load(JNIEnv *env, jobject, jstring jmodel_path) {
+Java_com_arm_aichat_internal_InferenceEngineImpl_load(JNIEnv *env, jobject, jstring jmodel_path, jboolean use_jinja) {
+    g_use_jinja = (bool)use_jinja;
     llama_model_params model_params = llama_model_default_params();
 
     const auto *model_path = env->GetStringUTFChars(jmodel_path, 0);
@@ -291,7 +293,7 @@ static std::string chat_add_and_format(const std::string &role, const std::strin
     new_msg.role = role;
     new_msg.content = content;
     auto formatted = common_chat_format_single(
-            g_chat_templates.get(), chat_msgs, new_msg, role == ROLE_USER, /* use_jinja */ false);
+            g_chat_templates.get(), chat_msgs, new_msg, role == ROLE_USER, g_use_jinja);
     chat_msgs.push_back(new_msg);
     LOGi("%s: Formatted and added %s message: \n%s\n", __func__, role.c_str(), formatted.c_str());
     return formatted;
@@ -601,6 +603,7 @@ Java_com_arm_aichat_internal_InferenceEngineImpl_unload(JNIEnv * /*unused*/, job
     llama_batch_free(g_batch);
     llama_free(g_context);
     llama_model_free(g_model);
+    g_use_jinja = false;
 }
 
 extern "C"
