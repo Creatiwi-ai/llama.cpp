@@ -5,7 +5,6 @@ import android.util.Log
 import com.arm.aichat.InferenceEngine
 import com.arm.aichat.UnsupportedArchitectureException
 import com.arm.aichat.internal.InferenceEngineImpl.Companion.getInstance
-import dalvik.annotation.optimization.FastNative
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -78,38 +77,34 @@ internal class InferenceEngineImpl private constructor(
     /**
      * JNI methods
      * @see ai_chat.cpp
+     *
+     * None of these is @FastNative. Model load, prepare, prompt prefill, token decode, benchmark,
+     * KV cache reset and unload run for milliseconds to seconds, and while a thread is inside a
+     * @FastNative call the runtime cannot suspend it for garbage collection: threads that are
+     * already suspended, the main thread included, stay frozen until the call returns. The platform
+     * javadoc says "Do not use this annotation for long-running methods". The rest (init,
+     * systemInfo, shutdown) run once per process, where the annotation saves nothing.
      */
-    @FastNative
     private external fun init(nativeLibDir: String)
 
-    @FastNative
     private external fun load(modelPath: String, useJinja: Boolean): Int
 
-    @FastNative
     private external fun prepare(): Int
 
-    @FastNative
     private external fun systemInfo(): String
 
-    @FastNative
     private external fun benchModel(pp: Int, tg: Int, pl: Int, nr: Int): String
 
-    @FastNative
     private external fun processSystemPrompt(systemPrompt: String): Int
 
-    @FastNative
     private external fun processUserPrompt(userPrompt: String, predictLength: Int): Int
 
-    @FastNative
     private external fun generateNextToken(): String?
 
-    @FastNative
     private external fun nativeResetContext()
 
-    @FastNative
     private external fun unload()
 
-    @FastNative
     private external fun shutdown()
 
     private val _state =
@@ -119,6 +114,12 @@ internal class InferenceEngineImpl private constructor(
     private var _readyForSystemPrompt = false
     @Volatile
     private var _cancelGeneration = false
+
+    /**
+     * Whether native [load] succeeded and [unload] has not run since, i.e. whether the native side
+     * holds a model. Read and written on [llamaDispatcher] only.
+     */
+    private var _nativeModelLoaded = false
 
     /**
      * Single-threaded coroutine dispatcher & scope for LLama asynchronous operations
@@ -171,6 +172,7 @@ internal class InferenceEngineImpl private constructor(
                     // TODO-han.yin: find a better way to pass other error codes
                     if (it != 0) throw UnsupportedArchitectureException()
                 }
+                _nativeModelLoaded = true
                 prepare().let {
                     if (it != 0) throw IOException("Failed to prepare resources")
                 }
@@ -231,11 +233,17 @@ internal class InferenceEngineImpl private constructor(
             _readyForSystemPrompt = false
             _state.value = InferenceEngine.State.ProcessingUserPrompt
 
-            processUserPrompt(message, predictLength).let { result ->
-                if (result != 0) {
-                    Log.e(TAG, "Failed to process user prompt: $result")
-                    return@flow
-                }
+            // Keep this a plain statement. As `processUserPrompt(...).let { if (it != 0) return@flow }`
+            // Kotlin 2.0.0 typed the `let` as Nothing and compiled everything below it into
+            // `throw KotlinNothingValueException()`, so 1.1.0 to 1.4.1 never produced a token.
+            // publish-aar.yml checks the bytecode for this (examples/llama.android/scripts/verify-aar-bytecode.sh).
+            val prefillResult = processUserPrompt(message, predictLength)
+            if (prefillResult != 0) {
+                Log.e(TAG, "Failed to process user prompt: $prefillResult")
+                // The model and context are still loaded, but the KV cache and chat history may
+                // hold part of this prompt: call resetContext() before the next turn.
+                _state.value = InferenceEngine.State.ModelReady
+                return@flow
             }
 
             Log.i(TAG, "User prompt processed. Generating assistant prompt...")
@@ -329,6 +337,7 @@ internal class InferenceEngineImpl private constructor(
                     _state.value = InferenceEngine.State.UnloadingModel
 
                     unload()
+                    _nativeModelLoaded = false
 
                     _state.value = InferenceEngine.State.Initialized
                     Log.i(TAG, "Model unloaded!")
@@ -337,6 +346,14 @@ internal class InferenceEngineImpl private constructor(
 
                 is InferenceEngine.State.Error -> {
                     Log.i(TAG, "Resetting error states...")
+                    // An error after a successful load (prepare, system prompt, generation) leaves
+                    // the model in native memory. Free it here: the next loadModel would otherwise
+                    // keep it allocated next to the new one.
+                    if (_nativeModelLoaded) {
+                        Log.i(TAG, "Unloading the model left by the error...")
+                        unload()
+                        _nativeModelLoaded = false
+                    }
                     _state.value = InferenceEngine.State.Initialized
                     Log.i(TAG, "States reset!")
                     Unit
