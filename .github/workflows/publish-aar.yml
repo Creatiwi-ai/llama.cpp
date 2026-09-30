@@ -4,6 +4,9 @@ on:
   push:
     branches: [arloom-compat]
     tags: ['v*']
+  # Builds and verifies the AAR for PRs into arloom-compat; the publish step below is skipped for them.
+  pull_request:
+    branches: [arloom-compat]
   workflow_dispatch:
     inputs:
       version:
@@ -36,7 +39,9 @@ jobs:
           distribution: 'temurin'
 
       - name: Setup Android SDK
-        uses: android-actions/setup-android@v3
+        # v3 installs the "tools" package by default, which the SDK repository no longer has
+        # (sdkmanager fails with "Failed to find package 'tools'"). v4.0.2+ fixes that.
+        uses: android-actions/setup-android@v4
 
       - name: Install NDK
         run: |
@@ -52,7 +57,7 @@ jobs:
             VERSION="${{ github.ref_name }}"
             VERSION="${VERSION#v}"
           else
-            VERSION="1.3.0-SNAPSHOT"
+            VERSION="1.4.2-SNAPSHOT"
           fi
           echo "version=$VERSION" >> $GITHUB_OUTPUT
           echo "Building version: $VERSION"
@@ -63,7 +68,16 @@ jobs:
           chmod +x gradlew
           ./gradlew :lib:assembleRelease --no-daemon
 
+      # 1.1.0 to 1.4.1 shipped an InferenceEngineImpl that could not generate a single token
+      # (Kotlin 2.0.0 compiled the generation loop into a throw). Never publish such an AAR again.
+      - name: Verify generation loop in AAR bytecode
+        working-directory: examples/llama.android
+        run: |
+          chmod +x scripts/verify-aar-bytecode.sh
+          ./scripts/verify-aar-bytecode.sh lib/build/outputs/aar/lib-release.aar
+
       - name: Publish to GitHub Packages
+        if: github.event_name == 'push' || github.event_name == 'workflow_dispatch'
         working-directory: examples/llama.android
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

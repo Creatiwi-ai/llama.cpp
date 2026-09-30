@@ -593,16 +593,22 @@ Java_com_arm_aichat_internal_InferenceEngineImpl_nativeResetContext(JNIEnv * /*u
 extern "C"
 JNIEXPORT void JNICALL
 Java_com_arm_aichat_internal_InferenceEngineImpl_unload(JNIEnv * /*unused*/, jobject /*unused*/) {
-    // Reset long-term & short-term states
-    reset_long_term_states();
+    // Reset long-term & short-term states. There is no KV cache to clear when prepare() failed.
+    reset_long_term_states(g_context != nullptr);
     reset_short_term_states();
 
-    // Free up resources
+    // Free up resources and null every handle. cleanUp() from the Error state calls this after a
+    // load() whose prepare() failed, when only g_model is set, and the handles of an earlier
+    // unload() must not be freed a second time.
     common_sampler_free(g_sampler);
+    g_sampler = nullptr;
     g_chat_templates.reset();
     llama_batch_free(g_batch);
+    g_batch = {};
     llama_free(g_context);
+    g_context = nullptr;
     llama_model_free(g_model);
+    g_model = nullptr;
     g_use_jinja = false;
 }
 
