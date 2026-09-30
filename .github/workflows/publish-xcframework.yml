@@ -4,6 +4,9 @@ on:
   push:
     branches: [arloom-compat]
     tags: ['v*']
+  # Builds the XCFramework for PRs into arloom-compat. The release step below runs only for the branch and v* tags.
+  pull_request:
+    branches: [arloom-compat]
   workflow_dispatch:
 
 env:
