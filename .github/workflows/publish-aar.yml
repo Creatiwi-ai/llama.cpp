@@ -63,6 +63,14 @@ jobs:
           chmod +x gradlew
           ./gradlew :lib:assembleRelease --no-daemon
 
+      # 1.1.0 to 1.4.1 shipped an InferenceEngineImpl that could not generate a single token
+      # (Kotlin 2.0.0 compiled the generation loop into a throw). Never publish such an AAR again.
+      - name: Verify generation loop in AAR bytecode
+        working-directory: examples/llama.android
+        run: |
+          chmod +x scripts/verify-aar-bytecode.sh
+          ./scripts/verify-aar-bytecode.sh lib/build/outputs/aar/lib-release.aar
+
       - name: Publish to GitHub Packages
         working-directory: examples/llama.android
         env:
