@@ -79,6 +79,18 @@ fail() {
   failed=1
 }
 
+# grep that tells "no match" (exit 1) apart from an error (exit 2: bad pattern, unreadable file).
+# A plain `grep ... || true` would turn an error into a clean pass.
+grep_or_fail() {
+  local rc=0
+  grep "$@" || rc=$?
+  if [ "$rc" -gt 1 ]; then
+    echo "FAIL: grep exited $rc for: grep $*" >&2
+    return 2
+  fi
+  return 0
+}
+
 readelf_bin="$(find_readelf)" || {
   echo "FAIL: llvm-readelf not found. Set READELF, ANDROID_NDK_HOME or ANDROID_HOME."
   exit 1
@@ -149,12 +161,22 @@ fi
 
 for needle in "${forbidden_strings[@]}"; do
   for so in "${libs[@]}"; do
-    if grep -aqF -- "$needle" "$work/aar/$so"; then
-      fail "$so still contains the log format '$needle', which writes message text."
-    fi
+    rc=0
+    grep -aqF -- "$needle" "$work/aar/$so" || rc=$?
+    case "$rc" in
+      0) fail "$so still contains the log format '$needle', which writes message text." ;;
+      1) ;;
+      *) fail "grep exited $rc reading $so." ;;
+    esac
   done
-  if [ -d "$work/classes" ] && grep -raqF -- "$needle" "$work/classes"; then
-    fail "classes.jar still contains the log format '$needle'."
+  if [ -d "$work/classes" ]; then
+    rc=0
+    grep -raqF -- "$needle" "$work/classes" || rc=$?
+    case "$rc" in
+      0) fail "classes.jar still contains the log format '$needle'." ;;
+      1) ;;
+      *) fail "grep exited $rc reading the classes of classes.jar." ;;
+    esac
   fi
 done
 
@@ -168,22 +190,31 @@ if [ -n "$src" ]; then
   # purpose: a variable holding message text never appears inside a log call, not even as
   # text.size(). Take the size into its own variable first and log that.
   cpp_content_vars='formatted|formatted_system_prompt|formatted_user_prompt|system_prompt|user_prompt|jsystem_prompt|juser_prompt|content|assistant_text|assistant_ss|cached_token_chars|new_token_chars|new_token_id|common_token_to_piece|chat_msgs\[[^]]*\]'
+  cpp_files=0
   while IFS= read -r -d '' file; do
-    hits="$(sed -E -e 's/"([^"\\]|\\.)*"/""/g' -e 's://.*$::' "$file" \
-      | tr '\n' ' ' | sed 's/;/;\n/g' \
-      | grep -E "LOG[vdiwe]\\(.*\\b($cpp_content_vars)\\b" || true)"
+    cpp_files=$((cpp_files + 1))
+    [ -r "$file" ] || { fail "$file is not readable."; continue; }
+    joined="$(sed -E -e 's/"([^"\\]|\\.)*"/""/g' -e 's://.*$::' "$file" | tr '\n' ' ' | sed 's/;/;\n/g')"
+    hits="$(grep_or_fail -E "LOG[vdiwe]\\(.*\\b($cpp_content_vars)\\b" <<<"$joined")" \
+      || { fail "the C++ log check could not run on $file."; continue; }
     if [ -n "$hits" ]; then
       fail "$file has a log call whose arguments include message text:"
       printf '       %s\n' "$hits"
     fi
   done < <(find "$src/cpp" -type f \( -name '*.cpp' -o -name '*.h' \) -print0)
+  [ "$cpp_files" -gt 0 ] || fail "no C++ sources under $src/cpp, so the C++ log check saw nothing."
 
   # Kotlin: Log.x(...) with a template or an argument naming the prompt, the message or a token.
   kt_content_vars='message|prompt|systemPrompt|userPrompt|utf8token|token'
-  kt_hits="$(grep -rnE "Log\\.[vdiwe]\\(.*(\\\$\\{?($kt_content_vars)\\b|, *($kt_content_vars) *[,)])" "$src/java" || true)"
-  if [ -n "$kt_hits" ]; then
-    fail "Kotlin log calls include message text:"
-    printf '       %s\n' "$kt_hits"
+  kt_files="$(find "$src/java" -type f -name '*.kt' | wc -l)"
+  [ "$kt_files" -gt 0 ] || fail "no Kotlin sources under $src/java, so the Kotlin log check saw nothing."
+  if kt_hits="$(grep_or_fail -rnE --include='*.kt' "Log\\.[vdiwe]\\(.*(\\\$\\{?($kt_content_vars)\\b|, *($kt_content_vars) *[,)])" "$src/java")"; then
+    if [ -n "$kt_hits" ]; then
+      fail "Kotlin log calls include message text:"
+      printf '       %s\n' "$kt_hits"
+    fi
+  else
+    fail "the Kotlin log check could not run."
   fi
 fi
 
