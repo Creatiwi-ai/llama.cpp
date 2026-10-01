@@ -288,6 +288,13 @@ static void shift_context() {
     LOGi("%s: Context shifting done! Current position: %d", __func__, current_position);
 }
 
+/**
+ * Privacy: no log in this file may carry message text. System prompts, user prompts and generated
+ * text hold the user's private memories, and logcat is readable by bug reports, OEM log collectors
+ * and adb. Log byte counts, token counts, timings and states only, never token ids or pieces either
+ * (a token id maps straight back to text through the vocab). publish-aar.yml enforces this with
+ * scripts/verify-aar-native.sh.
+ */
 static std::string chat_add_and_format(const std::string &role, const std::string &content) {
     common_chat_msg new_msg;
     new_msg.role = role;
@@ -295,7 +302,9 @@ static std::string chat_add_and_format(const std::string &role, const std::strin
     auto formatted = common_chat_format_single(
             g_chat_templates.get(), chat_msgs, new_msg, role == ROLE_USER, g_use_jinja);
     chat_msgs.push_back(new_msg);
-    LOGi("%s: Formatted and added %s message: \n%s\n", __func__, role.c_str(), formatted.c_str());
+    const size_t n_bytes = formatted.size();
+    LOGi("%s: Added %s message (%zu bytes formatted, %zu messages in history)",
+         __func__, role.c_str(), n_bytes, chat_msgs.size());
     return formatted;
 }
 
@@ -365,8 +374,8 @@ Java_com_arm_aichat_internal_InferenceEngineImpl_processSystemPrompt(
 
     // Obtain system prompt from JEnv
     const auto *system_prompt = env->GetStringUTFChars(jsystem_prompt, nullptr);
-    LOGd("%s: System prompt received: \n%s", __func__, system_prompt);
     std::string formatted_system_prompt(system_prompt);
+    const size_t n_prompt_bytes = formatted_system_prompt.size();
 
     // Format system prompt if applicable
     const bool has_chat_template = common_chat_templates_was_explicit(g_chat_templates.get());
@@ -378,9 +387,9 @@ Java_com_arm_aichat_internal_InferenceEngineImpl_processSystemPrompt(
     // Tokenize system prompt
     const auto system_tokens = common_tokenize(g_context, formatted_system_prompt,
                                                has_chat_template, has_chat_template);
-    for (auto id: system_tokens) {
-        LOGv("token: `%s`\t -> `%d`", common_token_to_piece(g_context, id).c_str(), id);
-    }
+    const int n_system_tokens = (int) system_tokens.size();
+    LOGi("%s: System prompt of %zu bytes is %d tokens (chat template: %s)",
+         __func__, n_prompt_bytes, n_system_tokens, has_chat_template ? "yes" : "no");
 
     // Handle context overflow
     const int max_batch_size = DEFAULT_CONTEXT_SIZE - OVERFLOW_HEADROOM;
@@ -391,10 +400,13 @@ Java_com_arm_aichat_internal_InferenceEngineImpl_processSystemPrompt(
     }
 
     // Decode system tokens in batches
+    const auto t_start_us = ggml_time_us();
     if (decode_tokens_in_batches(g_context, g_batch, system_tokens, current_position)) {
         LOGe("%s: llama_decode() failed!", __func__);
         return 2;
     }
+    LOGi("%s: Decoded %d tokens in %.1f ms", __func__, n_system_tokens,
+         double(ggml_time_us() - t_start_us) / 1000.0);
 
     // Update position
     system_prompt_position = current_position = (int) system_tokens.size();
@@ -414,8 +426,8 @@ Java_com_arm_aichat_internal_InferenceEngineImpl_processUserPrompt(
 
     // Obtain and tokenize user prompt
     const auto *const user_prompt = env->GetStringUTFChars(juser_prompt, nullptr);
-    LOGd("%s: User prompt received: \n%s", __func__, user_prompt);
     std::string formatted_user_prompt(user_prompt);
+    const size_t n_prompt_bytes = formatted_user_prompt.size();
 
     // Format user prompt if applicable
     const bool has_chat_template = common_chat_templates_was_explicit(g_chat_templates.get());
@@ -426,12 +438,11 @@ Java_com_arm_aichat_internal_InferenceEngineImpl_processUserPrompt(
 
     // Decode formatted user prompts
     auto user_tokens = common_tokenize(g_context, formatted_user_prompt, has_chat_template, has_chat_template);
-    for (auto id: user_tokens) {
-        LOGv("token: `%s`\t -> `%d`", common_token_to_piece(g_context, id).c_str(), id);
-    }
 
     // Ensure user prompt doesn't exceed the context size by truncating if necessary.
     const int user_prompt_size = (int) user_tokens.size();
+    LOGi("%s: User prompt of %zu bytes is %d tokens (chat template: %s, n_predict: %d)",
+         __func__, n_prompt_bytes, user_prompt_size, has_chat_template ? "yes" : "no", (int) n_predict);
     const int max_batch_size = DEFAULT_CONTEXT_SIZE - OVERFLOW_HEADROOM;
     if (user_prompt_size > max_batch_size) {
         const int skipped_tokens = user_prompt_size - max_batch_size;
@@ -440,10 +451,13 @@ Java_com_arm_aichat_internal_InferenceEngineImpl_processUserPrompt(
     }
 
     // Decode user tokens in batches
+    const auto t_start_us = ggml_time_us();
     if (decode_tokens_in_batches(g_context, g_batch, user_tokens, current_position, true)) {
         LOGe("%s: llama_decode() failed!", __func__);
         return 2;
     }
+    LOGi("%s: Decoded %d tokens in %.1f ms", __func__, (int) user_tokens.size(),
+         double(ggml_time_us() - t_start_us) / 1000.0);
 
     // Update position
     current_position += user_prompt_size;
@@ -520,8 +534,10 @@ Java_com_arm_aichat_internal_InferenceEngineImpl_generateNextToken(
 
     // Stop if next token is EOG
     if (llama_vocab_is_eog(llama_model_get_vocab(g_model), new_token_id)) {
-        LOGd("id: %d,\tIS EOG!\nSTOP.", new_token_id);
-        chat_add_and_format(ROLE_ASSISTANT, assistant_ss.str());
+        const std::string assistant_text = assistant_ss.str();
+        const size_t n_assistant_bytes = assistant_text.size();
+        LOGd("%s: End of generation after %zu bytes", __func__, n_assistant_bytes);
+        chat_add_and_format(ROLE_ASSISTANT, assistant_text);
         return nullptr;
     }
 
@@ -529,16 +545,13 @@ Java_com_arm_aichat_internal_InferenceEngineImpl_generateNextToken(
     auto new_token_chars = common_token_to_piece(g_context, new_token_id);
     cached_token_chars += new_token_chars;
 
-    // Create and return a valid UTF-8 Java string
+    // Create and return a valid UTF-8 Java string. No per-token log: a token id or piece is content.
     jstring result = nullptr;
     if (is_valid_utf8(cached_token_chars.c_str())) {
         result = env->NewStringUTF(cached_token_chars.c_str());
-        LOGv("id: %d,\tcached: `%s`,\tnew: `%s`", new_token_id, cached_token_chars.c_str(), new_token_chars.c_str());
-
         assistant_ss << cached_token_chars;
         cached_token_chars.clear();
     } else {
-        LOGv("id: %d,\tappend to cache", new_token_id);
         result = env->NewStringUTF("");
     }
     return result;

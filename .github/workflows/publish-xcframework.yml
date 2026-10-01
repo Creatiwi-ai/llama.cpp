@@ -38,7 +38,7 @@ jobs:
             VERSION="${{ github.ref_name }}"
             VERSION="${VERSION#v}"
           else
-            VERSION="1.4.2-SNAPSHOT"
+            VERSION="1.4.3-SNAPSHOT"
           fi
           echo "version=$VERSION" >> $GITHUB_OUTPUT
           echo "Building version: $VERSION"

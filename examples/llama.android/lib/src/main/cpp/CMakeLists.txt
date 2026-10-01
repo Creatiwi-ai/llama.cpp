@@ -37,6 +37,20 @@ if(NOT DEFINED GGML_OPENMP)
     set(GGML_OPENMP OFF)
 endif()
 
+# 16 KB page sizes. Devices with 16 KB pages refuse to System.loadLibrary() a .so whose LOAD
+# segments are aligned to 4 KB, which is what NDK r27 and lower produce by default (1.4.2 and
+# earlier shipped p_align 0x1000). max-page-size aligns the LOAD segments, common-page-size pads
+# the end of GNU_RELRO to 16 KB; https://developer.android.com/guide/practices/page-sizes asks
+# for both below r28. add_link_options() covers every target created after it in this directory
+# and below, so it must stay ahead of add_subdirectory(): ggml, ggml-base, ggml-cpu and llama are
+# created there, and they ship in the AAR next to ai-chat. scripts/verify-aar-native.sh checks
+# the result in publish-aar.yml.
+if(ANDROID)
+    add_link_options(
+            "-Wl,-z,max-page-size=16384"
+            "-Wl,-z,common-page-size=16384")
+endif()
+
 set(LLAMA_SRC ${CMAKE_CURRENT_LIST_DIR}/../../../../../../)
 add_subdirectory(${LLAMA_SRC} build-llama)
 
