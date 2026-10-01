@@ -57,7 +57,7 @@ jobs:
             VERSION="${{ github.ref_name }}"
             VERSION="${VERSION#v}"
           else
-            VERSION="1.4.2-SNAPSHOT"
+            VERSION="1.4.3-SNAPSHOT"
           fi
           echo "version=$VERSION" >> $GITHUB_OUTPUT
           echo "Building version: $VERSION"
@@ -75,6 +75,18 @@ jobs:
         run: |
           chmod +x scripts/verify-aar-bytecode.sh
           ./scripts/verify-aar-bytecode.sh lib/build/outputs/aar/lib-release.aar
+
+      # Up to 1.4.2 every .so had 4 KB LOAD alignment, so System.loadLibrary failed on 16 KB page
+      # devices, and ai_chat.cpp logged every chat message (the user's private memories) to logcat.
+      # Never publish either again: every .so needs p_align >= 0x4000 and a 16 KB aligned RELRO end,
+      # and no .so, class or source log call may write message text. READELF pins the NDK installed
+      # above, not whichever NDK the runner image ships.
+      - name: Verify native libraries in AAR (16 KB pages, no message text in logs)
+        working-directory: examples/llama.android
+        run: |
+          export READELF="${ANDROID_HOME:-$ANDROID_SDK_ROOT}/ndk/26.1.10909125/toolchains/llvm/prebuilt/linux-x86_64/bin/llvm-readelf"
+          chmod +x scripts/verify-aar-native.sh
+          ./scripts/verify-aar-native.sh lib/build/outputs/aar/lib-release.aar lib/src/main
 
       - name: Publish to GitHub Packages
         if: github.event_name == 'push' || github.event_name == 'workflow_dispatch'
